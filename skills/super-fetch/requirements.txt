@@ -1,0 +1,7 @@
+# super-fetch 运行依赖（Python 3.10+）
+curl_cffi>=0.7
+beautifulsoup4>=4.12
+markdownify>=0.11
+lxml>=5.0
+playwright>=1.45
+playwright-stealth>=2.0

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# 我自己的 gh：配置目录独立，不碰虾虾的登录态
+export GH_CONFIG_DIR="${GH_CONFIG_DIR:-$HOME/agents/xiaoyu/credentials/gh}"
+mkdir -p "$GH_CONFIG_DIR" && chmod 700 "$GH_CONFIG_DIR"
+exec /home/xunbu/.local/bin/gh "$@"
