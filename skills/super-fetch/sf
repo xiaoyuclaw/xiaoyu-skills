@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# 技能内包装：优先用技能自带 .venv，没有再退回系统 python
+# super-fetch（Go 版）技能内包装：数据留在本目录 .data
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY="$DIR/.venv/bin/python"
-[ -x "$PY" ] || PY="$(command -v python3)"
-exec "$PY" "$DIR/fetch.py" "$@"
+exec "$DIR/bin/sf" "$@"

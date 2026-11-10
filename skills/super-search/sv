@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# super-search 包装：复用 super-fetch 的 .venv
+# super-search（Go 版）：复用 super-fetch 的 sv 二进制与 .data
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY="$DIR/../super-fetch/.venv/bin/python"
-[ -x "$PY" ] || PY="$(command -v python3)"
-exec "$PY" "$DIR/search.py" "$@"
+exec "$DIR/../super-fetch/bin/sv" "$@"

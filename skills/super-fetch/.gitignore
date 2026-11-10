@@ -1,4 +1,3 @@
-.venv/
+bin/
 .data/
-__pycache__/
-*.pyc
+*.test

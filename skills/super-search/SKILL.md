@@ -10,7 +10,76 @@ dependencies:
 
 基于 super-fetch 的多领域搜索工具集。
 
-> **默认用内置 `web_search`**（结果更准、带日期）。本工具只在这些情况上用：内置搜不到、要原始结果页、要多引擎交叉验证、要中文实时资讯。
+> **本环境没有可用的内置 `web_search`**（它走 DeepSeek 官方搜索 API，需要有效 API key 或账号路由；
+> 当前聊天路由是 opencode-go，工具被隐去）。所以搜索就这里：多引擎回退，免费。
+>
+> 只有 Go 版（2026-11-10 统一）：`./sv`、`svg`、`~/agents/xiaoyu/.agents/skills/super-fetch/bin/sv` 是同一个二进制；
+> 数据（Cookie/链接库）和 super-fetch 共用 `../super-fetch/.data`。
+
+## 结果抽取（2026-11-09 重构）
+
+- **条目从 DOM 抽，不从 Markdown 正则猜**：每个引擎配一份块选择器
+  （bing `li.b_algo`、baidu `.c-container`、sogou `.vrwrap`、360 `.res-list`、ddg `article[data-testid=result]`），
+  块内取「标题链接 + 摘要」，URL 用真实 href。
+- **通用兜底**：选择器没命中时，找「重复出现 ≥3 次、且内含外链标题」的兄弟块。
+- **最后兜底**：一条都抽不出来时，直接把清洗后的 Markdown 输出给模型自己读（不再输出「没解析出条目」）。
+- `--md` 强制输出 Markdown（附 `@代号 → 真实地址` 对照表），适合让模型直接读整页结果。
+- `-j` 的 `items[]` 现在带 `url` 字段，可直接引用。
+
+```bash
+./sv "关键词" --md          # 直接给 Markdown + 链接对照
+./sv "关键词" -j            # 结构化：title / snippet / code / url
+```
+
+验证状态与实测（2026-11-09）：
+
+| 引擎 | 成功率（4 查询实测） | 状态 |
+|---|---|---|
+| **toutiao**（头条搜索） | 可用，1.3–2.5s | 中文默认第一：热点/价格类更新快；已过滤热榜卡（26-hotlist）、视频卡（26-video）、站内聚合页、无来源卡片；少于 2 条自动回退 bing |
+| **bing** | 4/4，1.0–1.8s | 英文默认第一，中文第二 |
+| baidu | 4/4，1.6–2.0s | 中文时效最好；URL 已从 `baidu.com/link` 解成真实地址（读 `mu` 属性） |
+| ddg | 可用 | 改用 `html.duckduckgo.com/html/` 无 JS 接口，**不要预热**，URL 自动解 `uddg` |
+| **shenma**（神马） | 可用但会软限流 | SSR 页面，结构 `.sc` + `.qk-title-text`；连续请求会返回「没有找到相关结果」，间隔几秒恢复 |
+| sogou | 0/4 | 本机 IP 被判定（浏览器通道也是验证码），基本不可用 |
+| 360 | 1/4 | 本机 IP 被判定（返回「访问异常页面」），不稳定 |
+
+- **默认顺序**：中文 `bing → baidu → toutiao → 360 → sogou → shenma → ddg`；英文 `bing → baidu → ddg → 360 → sogou`。
+- 神马的前端是 `qk-*` 类名，标题是 div、链接在同级 `a.qk-link-wrapper`；抽取器已支持
+  「标题不是链接时往上/找同级链接」。夸克同一套前端但被阿里风控（punish + secaptcha），已移除。
+  头条用于中文新鲜资讯，bing 是可靠性兜底。
+- **广告/推广过滤**：按 class（`b_ad`/`result--ad`/`ec-tuiguang`/`e-ads`）、`data-tuiguang` 属性、
+  以及「广告/推广/赞助」开头的文案剔除；「大家还在搜」「相关搜索」「进一步探索」这类卡片也过滤。
+- 教训：**不要给 curl_cffi 手写 Accept/Accept-Language**——它会顶掉 impersonate 的默认头，
+  ddg 会直接判人机。
+- 头条链接是 `/search/jump?url=<zlink?h5_url=真实地址>`，纯字符串解码（`_unwrap_toutiao`），
+  不用多发请求；解不出时保留跳转链接也能打开。
+
+## 翻页与条数（2026-11-09 修正）
+
+- **默认只抓首页**（0.4–0.8s），`-P/--pages N` 才拼接后续页，按 URL 去重，不做重排。
+- `-n/--count` 控制最终条数（默认 10）。
+
+各引擎翻页的实测情况：
+
+| 引擎 | 参数 | 实测（2 页） |
+|---|---|---|
+| **bing** | `&first=11&FORM=PERE` | ✅ 19 条 |
+| **baidu** | `&pn=10` | ✅ 19 条 |
+| **toutiao** | `&offset=10` | ✅ 15 条 |
+| **shenma** | `&page=N` | ⚠️ 能翻，但软限流时首页都可能空 |
+| **ddg** | POST `/html/` 表单（`vqd` 令牌） | ⚠️ 经常 202 限流，时好时坏 |
+| 360 | `&pn=N` | 未验证（IP 被判定） |
+| sogou | `&page=N` | 未验证（IP 被判定） |
+
+- bing 翻页必须：**同一会话**（先取首页拿 cookie）+ **Referer** + `www.bing.com`（`cn.bing.com` 会忽略 `first`）。
+- bing 结果链接是 `bing.com/ck/a?u=a1<base64url>` 跳转，已实现解码，否则翻页结果会被站内链接过滤成 0 条。
+
+```bash
+sv "关键词"                    # 首页 + 默认 10 条
+sv "关键词" -n 20              # 首页，最多 20 条
+sv "关键词" -e bing -P 3       # bing 三页（~8s）
+sv "关键词" -e baidu -P 2      # baidu 两页（~7s）
+```
 
 ## 快速开始（推荐用 sv）
 
@@ -122,19 +191,19 @@ cd ../super-fetch
 
 ```bash
 # 无会话（默认）
-python ../super-fetch/fetch.py "https://cn.bing.com/search?q=关键词"
+sf "https://cn.bing.com/search?q=关键词"
 
 # 使用默认会话
-python ../super-fetch/fetch.py "https://cn.bing.com/search?q=关键词" -s
+sf "https://cn.bing.com/search?q=关键词" -s
 
 # 使用指定会话
-python ../super-fetch/fetch.py "https://cn.bing.com/search?q=关键词" -s my_search.json
+sf "https://cn.bing.com/search?q=关键词" -s my_search.json
 ```
 
 ### 交互模式（处理验证码/登录）
 
 ```bash
-python ../super-fetch/fetch.py "https://cn.bing.com/search?q=关键词" -i
+sf "https://cn.bing.com/search?q=关键词" -i
 ```
 
 ## 领域搜索
@@ -206,23 +275,23 @@ python ../super-fetch/fetch.py "https://cn.bing.com/search?q=关键词" -i
 ### 示例 1: 快速搜索（静态页）
 
 ```bash
-python ../super-fetch/fetch.py "https://cn.bing.com/search?q=python+教程" -e cffi
+sf "https://cn.bing.com/search?q=python+教程" -e cffi
 ```
 
 ### 示例 2: 动态搜索（Playwright）
 
 ```bash
-python ../super-fetch/fetch.py "https://github.com/search?q=python&type=repositories" -e playwright -w 5
+sf "https://github.com/search?q=python&type=repositories" -e playwright -w 5
 ```
 
 ### 示例 3: 带登录搜索
 
 ```bash
 # 首次交互登录
-python ../super-fetch/fetch.py "https://www.zhihu.com/search?q=AI" -i
+sf "https://www.zhihu.com/search?q=AI" -i
 
 # 后续使用会话
-python ../super-fetch/fetch.py "https://www.zhihu.com/search?q=AI" -s
+sf "https://www.zhihu.com/search?q=AI" -s
 ```
 
 ## 参数速查
@@ -252,72 +321,72 @@ AI 新闻需要多维度分层搜索，**重点关注：新模型、新产品、
 
 ```bash
 # OpenAI 模型动态
-python ../super-fetch/fetch.py "https://www.bing.com/news/search?q=OpenAI+model+release+site:openai.com" -e playwright -w 3
+sf "https://www.bing.com/news/search?q=OpenAI+model+release+site:openai.com" -e playwright -w 3
 
 # Anthropic 模型动态
-python ../super-fetch/fetch.py "https://www.bing.com/news/search?q=Anthropic+Claude+model" -e playwright -w 3
+sf "https://www.bing.com/news/search?q=Anthropic+Claude+model" -e playwright -w 3
 
 # Google AI 模型动态
-python ../super-fetch/fetch.py "https://www.bing.com/news/search?q=Google+DeepMind+AI+model+Gemini" -e playwright -w 3
+sf "https://www.bing.com/news/search?q=Google+DeepMind+AI+model+Gemini" -e playwright -w 3
 
 # Meta AI 模型动态
-python ../super-fetch/fetch.py "https://www.bing.com/news/search?q=Meta+AI+Llama+model+release" -e playwright -w 3
+sf "https://www.bing.com/news/search?q=Meta+AI+Llama+model+release" -e playwright -w 3
 
 # Mistral AI 模型动态
-python ../super-fetch/fetch.py "https://www.bing.com/news/search?q=Mistral+AI+model+release" -e playwright -w 3
+sf "https://www.bing.com/news/search?q=Mistral+AI+model+release" -e playwright -w 3
 
 # 国内大模型（百度/阿里/字节/DeepSeek）- 用 Bing 国际版搜索中文
-python ../super-fetch/fetch.py "https://cn.bing.com/search?q=文心一言+OR+通义千问+OR+豆包+OR+DeepSeek+发布+2026" -e playwright -w 3
+sf "https://cn.bing.com/search?q=文心一言+OR+通义千问+OR+豆包+OR+DeepSeek+发布+2026" -e playwright -w 3
 ```
 
 #### B. 新产品/新应用发布（最高优先级 ⭐⭐⭐⭐⭐）
 
 ```bash
 # Product Hunt 新品
-python ../super-fetch/fetch.py "https://www.producthunt.com/" -e playwright -w 5
-python ../super-fetch/fetch.py "https://www.producthunt.com/search?q=AI" -e playwright -w 3
+sf "https://www.producthunt.com/" -e playwright -w 5
+sf "https://www.producthunt.com/search?q=AI" -e playwright -w 3
 
 # AI 产品发布
-python ../super-fetch/fetch.py "https://www.bing.com/news/search?q=AI+product+launch+2026" -e playwright -w 3
+sf "https://www.bing.com/news/search?q=AI+product+launch+2026" -e playwright -w 3
 
 # AI 应用爆款
-python ../super-fetch/fetch.py "https://www.reddit.com/r/MachineLearning/" -e playwright -w 3
+sf "https://www.reddit.com/r/MachineLearning/" -e playwright -w 3
 ```
 
 #### C. 社区热度/病毒传播（关键维度）
 
 ```bash
 # Reddit AI 热点
-python ../super-fetch/fetch.py "https://www.reddit.com/search/?q=AI+viral+OR+AI+trending" -e playwright -w 3
+sf "https://www.reddit.com/search/?q=AI+viral+OR+AI+trending" -e playwright -w 3
 
 # Hacker News AI
-python ../super-fetch/fetch.py "https://news.ycombinator.com/" -e playwright -w 3
+sf "https://news.ycombinator.com/" -e playwright -w 3
 
 # GitHub Trending AI
-python ../super-fetch/fetch.py "https://github.com/trending" -e playwright -w 5
+sf "https://github.com/trending" -e playwright -w 5
 ```
 
 #### D. 大厂动态/产品发布
 
 ```bash
 # Bing AI 新闻
-python ../super-fetch/fetch.py "https://www.bing.com/news/search?q=AI+product+launch+2026" -e playwright -w 3
+sf "https://www.bing.com/news/search?q=AI+product+launch+2026" -e playwright -w 3
 
 # 搜狗 AI 新闻
-python ../super-fetch/fetch.py "https://www.sogou.com/web?query=AI+大模型+发布+site:news.sina.com.cn" -e cffi
+sf "https://www.sogou.com/web?query=AI+大模型+发布+site:news.sina.com.cn" -e cffi
 ```
 
 #### E. 垂直媒体/专业来源
 
 ```bash
 # 36氪 AI
-python ../super-fetch/fetch.py "https://www.36kr.com/search/articles/AI" -e playwright -w 3
+sf "https://www.36kr.com/search/articles/AI" -e playwright -w 3
 
 # 机器之心
-python ../super-fetch/fetch.py "https://www.jiqizhixin.com/" -e playwright -w 3
+sf "https://www.jiqizhixin.com/" -e playwright -w 3
 
 # Bing AI 专题
-python ../super-fetch/fetch.py "https://www.bing.com/news/search?q=AI+model+release+China" -e playwright -w 3
+sf "https://www.bing.com/news/search?q=AI+model+release+China" -e playwright -w 3
 ```
 
 ### AI 新闻输出格式
