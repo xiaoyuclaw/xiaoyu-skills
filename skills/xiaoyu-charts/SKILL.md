@@ -26,7 +26,7 @@ python3 scripts/viz.py          # 自检 + 出示例图
 
 ```python
 import sys
-sys.path.insert(0, '/home/xunbu/agents/xiaoyu/.agents/skills/xiaoyu-charts/scripts')
+sys.path.insert(0, '~/agents/xiaoyu/.agents/skills/xiaoyu-charts/scripts')
 import viz
 
 s = {

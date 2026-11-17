@@ -11,6 +11,7 @@
 | `skills/super-search/` | 多引擎搜索：cffi 优先，被风控自动升浏览器；结果结构化 |
 | `skills/xiaoyu-charts/` | 数据出图（matplotlib + seaborn 模板），行情抓取与缓存 |
 | `skills/xiaoyu-mcp/` | 按需调用 MCP 服务器（高德地图、DeepWiki） |
+| `skills/academic-access/` | 学术文献获取：知网、Crossref、Unpaywall、arXiv、出版商页、Wayback 的实践经验 |
 | `skills/xiaoyu-draw/` | AI 生图（智谱 CogView 免费档为默认） |
 | `tools/mcp_call.py` | 通用 MCP 客户端（http + stdio） |
 | `tools/cnki.py` | 知网检索直连（0.5 秒出题录） |
